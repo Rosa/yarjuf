@@ -1,11 +1,25 @@
 # An RSpec formatter for generating results in JUnit format
 class JUnit
-  RSpec::Core::Formatters.register self, :example_passed, :example_failed, :example_pending, :dump_summary
+  RSpec::Core::Formatters.register self, :example_group_started, :example_group_finished, :example_passed, :example_failed, :example_pending, :dump_summary
 
   def initialize(output)
     @output             = output
     @test_suite_results = {}
     @builder            = Builder::XmlMarkup.new :indent => 2
+    @current_suite = nil
+  end
+
+  def example_group_started(group_notification)
+    unless @current_suite.present?
+      suite_name = JUnit.test_suite_name_for(group_notification)
+      @test_suite_results[suite_name] ||= []
+      @current_suite = suite_name
+    end
+  end
+
+  def example_group_finished(group_notification)
+    suite_name = JUnit.test_suite_name_for(group_notification)
+    @current_suite = nil if @current_suite == suite_name
   end
 
   def example_passed(example_notification)
@@ -28,15 +42,16 @@ class JUnit
   protected
 
   def add_to_test_suite_results(example_notification)
-    suite_name                      = JUnit.root_group_name_for example_notification
-    @test_suite_results[suite_name] = [] unless @test_suite_results.keys.include? suite_name
-    @test_suite_results[suite_name] << example_notification.example
+    # suite_name                      = JUnit.root_group_name_for example_notification
+    # @test_suite_results[suite_name] = [] unless @test_suite_results.keys.include? suite_name
+    @test_suite_results[@current_suite] << example_notification.example
   end
 
   def failure_details_for(example)
-    exception           = example.exception
-    formatted_backtrace = RSpec::Core::BacktraceFormatter.new.format_backtrace exception.backtrace
-    exception.nil? ? '' : "#{exception.message}\n#{formatted_backtrace}"
+    exception = example.exception
+    return '' if exception.nil?
+    formatted_backtrace = RSpec::Core::BacktraceFormatter.new.format_backtrace(exception.backtrace).join("\n")
+    "#{exception.message}\n#{formatted_backtrace}"
   end
 
   # utility methods
@@ -49,8 +64,11 @@ class JUnit
     example_notification.example.metadata[:example_group][:description]
   end
 
-  # methods to build the xml for test suites and individual tests
+  def self.test_suite_name_for(group_notification)
+    group_notification.group.metadata[:full_description]
+  end
 
+  # methods to build the xml for test suites and individual tests
   def build_results(duration, example_count, failure_count, pending_count)
     @builder.instruct! :xml, :version => "1.0", :encoding => "UTF-8"
     @builder.testsuites(
